@@ -1,11 +1,15 @@
 package cloudapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"slices"
 
 	k6cloud "github.com/grafana/k6-cloud-openapi-client-go/k6"
 	"go.k6.io/k6/lib"
@@ -65,4 +69,100 @@ func (c *Client) ValidateToken(ctx context.Context, stackURL string) (_ *k6cloud
 	}
 
 	return resp, nil
+}
+
+// CreateCloudTest creates a new cloud test with the provided name and script archive.
+func (c *Client) CreateCloudTest(
+	ctx context.Context, name string, projectID int64, arcData []byte,
+) (lt *k6cloud.LoadTestApiModel, err error) {
+	projectID32, err := toInt32(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("converting project ID: %w", err)
+	}
+
+	req := c.apiClient.LoadTestsAPI.ProjectsLoadTestsCreate(c.authCtx(ctx), projectID32).
+		Name(name).
+		Script(io.NopCloser(bytes.NewReader(arcData))).
+		XStackId(c.stackID)
+
+	loadTest, res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+	if err := CheckResponse(res, rerr); err != nil {
+		return nil, fmt.Errorf("creating cloud test: %w", err)
+	}
+
+	return loadTest, nil
+}
+
+// updateCloudTest updates an existing cloud test with the provided script archive.
+func (c *Client) updateCloudTest(ctx context.Context, testID int32, arcData []byte) (err error) {
+	req := c.apiClient.LoadTestsAPI.LoadTestsScriptUpdate(c.authCtx(ctx), testID).
+		Body(io.NopCloser(bytes.NewReader(arcData))).
+		XStackId(c.stackID)
+
+	res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+	if err := CheckResponse(res, rerr); err != nil {
+		return fmt.Errorf("updating cloud test script: %w", err)
+	}
+	return nil
+}
+
+// FetchCloudTestByName retrieves a cloud test by its name within the specified project.
+func (c *Client) FetchCloudTestByName(
+	ctx context.Context, name string, projectID int64,
+) (lt *k6cloud.LoadTestApiModel, err error) {
+	projectID32, err := toInt32(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("converting project ID: %w", err)
+	}
+
+	req := c.apiClient.LoadTestsAPI.ProjectsLoadTestsRetrieve(c.authCtx(ctx), projectID32).
+		XStackId(c.stackID).
+		Name(name)
+
+	loadTests, res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+	if err := CheckResponse(res, rerr); err != nil {
+		return nil, fmt.Errorf("fetching cloud test by name: %w", err)
+	}
+
+	idx := slices.IndexFunc(loadTests.Value, func(t k6cloud.LoadTestApiModel) bool {
+		return t.Name == name
+	})
+	if idx < 0 {
+		return nil, fmt.Errorf("load test %q not found in project", name)
+	}
+	return &loadTests.Value[idx], nil
+}
+
+// CreateOrUpdateCloudTest creates a new cloud test or updates an existing one
+// if a test with the same name already exists.
+func (c *Client) CreateOrUpdateCloudTest(
+	ctx context.Context, name string, projectID int64, arc *lib.Archive,
+) (*k6cloud.LoadTestApiModel, error) {
+	var buf bytes.Buffer
+	if err := arc.Write(&buf); err != nil {
+		return nil, fmt.Errorf("writing archive: %w", err)
+	}
+	arcData := buf.Bytes()
+
+	test, err := c.CreateCloudTest(ctx, name, projectID, arcData)
+	if err != nil {
+		var rErr ResponseError
+		if !errors.As(err, &rErr) || rErr.Response.StatusCode != http.StatusConflict {
+			return nil, err
+		}
+
+		test, err = c.FetchCloudTestByName(ctx, name, projectID)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := c.updateCloudTest(ctx, test.Id, arcData); err != nil {
+			return nil, err
+		}
+	}
+
+	return test, nil
 }
