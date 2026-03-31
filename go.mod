@@ -20,7 +20,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/grafana/k6-cloud-openapi-client-go v0.0.0-20260106090513-285631296b5d
+	github.com/grafana/k6-cloud-openapi-client-go v0.0.0-20260331193133-94d5832119b8
 	github.com/grafana/k6provider v0.2.0
 	github.com/grafana/sobek v0.0.0-20260219184149-bdae4a158e94
 	github.com/grafana/xk6-dashboard-assets v0.1.2
@@ -70,6 +70,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require gopkg.in/validator.v2 v2.0.1 // indirect
+
 require (
 	buf.build/gen/go/gogo/protobuf/protocolbuffers/go v1.36.11-20240617172848-e1dbca2775a7.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
@@ -102,7 +104,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
-	gopkg.in/validator.v2 v2.0.1 // indirect
 )
 
 retract v1.2.0 // mistakenly pushed old tag from the old xk6-browser repo before it was merged in k6
