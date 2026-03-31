@@ -1,6 +1,7 @@
 package cloudapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,6 +70,11 @@ func (c *Client) SetStackID(stackID int64) {
 // BaseURL returns configured host.
 func (c *Client) BaseURL() string {
 	return c.baseURL
+}
+
+// authCtx returns a context enriched with the client's access token.
+func (c *Client) authCtx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, k6cloud.ContextAccessToken, c.token)
 }
 
 // CheckResponse checks the parsed response.
