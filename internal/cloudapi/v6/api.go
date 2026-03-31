@@ -3,17 +3,128 @@ package cloudapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
+	"time"
 
 	k6cloud "github.com/grafana/k6-cloud-openapi-client-go/k6"
 	"go.k6.io/k6/lib"
 )
+
+// V6 test run statuses per the OpenAPI spec (StatusApiModel).
+const (
+	StatusCreated           = "created"
+	StatusQueued            = "queued"
+	StatusInitializing      = "initializing"
+	StatusRunning           = "running"
+	StatusProcessingMetrics = "processing_metrics"
+	StatusCompleted         = "completed"
+	StatusAborted           = "aborted"
+
+	ResultFailed = "failed"
+	ResultError  = "error"
+)
+
+// TestRunProgress maps a subset of the v6 test run response to track
+// execution progress.
+type TestRunProgress struct {
+	Status            string
+	Result            string
+	EstimatedDuration int32
+	ExecutionDuration int32
+}
+
+// IsTerminal reports whether the test run status is a terminal state.
+func (p TestRunProgress) IsTerminal() bool {
+	switch p.Status {
+	case StatusCompleted, StatusAborted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Progress computes execution_duration / estimated_duration,
+// clamped to [0, 1]. Returns 0 if estimated_duration is zero or negative.
+func (p TestRunProgress) Progress() float64 {
+	if p.EstimatedDuration <= 0 || p.ExecutionDuration < 0 {
+		return 0
+	}
+	return math.Min(float64(p.ExecutionDuration)/float64(p.EstimatedDuration), 1.0)
+}
+
+// FetchTestRun calls GET /cloud/v6/test_runs/{id} and returns the test run progress.
+// Transient 502/503 errors are retried up to MaxRetries times.
+func (c *Client) FetchTestRun(ctx context.Context, testRunID int64) (_ *TestRunProgress, err error) {
+	testRunID32, err := toInt32(testRunID)
+	if err != nil {
+		return nil, fmt.Errorf("converting test run ID: %w", err)
+	}
+
+	var lastErr error
+	for attempt := range c.retries + 1 {
+		progress, status, fetchErr := c.fetchTestRunOnce(ctx, testRunID32)
+		if fetchErr == nil {
+			return progress, nil
+		}
+		if status != http.StatusBadGateway && status != http.StatusServiceUnavailable {
+			return nil, fetchErr
+		}
+		lastErr = fetchErr
+		if attempt < c.retries {
+			c.logger.WithField("attempt", attempt+1).
+				Warnf("Transient %d error fetching test run, retrying...", status)
+			retryTimer := time.NewTimer(c.retryInterval)
+			select {
+			case <-ctx.Done():
+				retryTimer.Stop()
+				return nil, fmt.Errorf("fetching test run: %w", ctx.Err())
+			case <-retryTimer.C:
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+func (c *Client) fetchTestRunOnce(
+	ctx context.Context, testRunID int32,
+) (_ *TestRunProgress, status int, err error) {
+	req := c.apiClient.TestRunsAPI.
+		TestRunsRetrieve(c.authCtx(ctx), testRunID).
+		XStackId(c.stackID)
+
+	resp, res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+
+	if res != nil {
+		status = res.StatusCode
+	}
+
+	if err := CheckResponse(res, rerr); err != nil {
+		return nil, status, err
+	}
+
+	progress := &TestRunProgress{
+		Status:            resp.Status,
+		ExecutionDuration: resp.ExecutionDuration,
+	}
+	if resp.Result.IsSet() && resp.Result.Get() != nil {
+		progress.Result = *resp.Result.Get()
+	}
+	if resp.EstimatedDuration.IsSet() && resp.EstimatedDuration.Get() != nil {
+		progress.EstimatedDuration = *resp.EstimatedDuration.Get()
+	}
+
+	return progress, status, nil
+}
 
 // ValidateOptions sends the provided options to the cloud for validation.
 func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options lib.Options) (err error) {
@@ -31,12 +142,10 @@ func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options l
 		return fmt.Errorf("converting project ID: %w", rerr)
 	}
 
-	validateOptions := &k6cloud.ValidateOptionsRequest{
-		ProjectId: *k6cloud.NewNullableInt32(&projectID32),
-		Options: k6cloud.Options{
-			AdditionalProperties: generic,
-		},
-	}
+	validateOptions := k6cloud.NewValidateOptionsRequest(k6cloud.Options{
+		AdditionalProperties: generic,
+	})
+	validateOptions.ProjectId = *k6cloud.NewNullableInt32(&projectID32)
 
 	req := c.apiClient.LoadTestsAPI.
 		ValidateOptions(c.authCtx(ctx)).
@@ -165,4 +274,41 @@ func (c *Client) CreateOrUpdateCloudTest(
 	}
 
 	return test, nil
+}
+
+// randomStrHex returns a hex string which can be used
+// for session token id or idempotency key.
+func randomStrHex() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// StartCloudTestRun starts a new cloud test run for a given test.
+func (c *Client) StartCloudTestRun(
+	ctx context.Context, loadTestID int32,
+) (ltr *k6cloud.StartLoadTestResponse, err error) {
+	req := c.apiClient.LoadTestsAPI.LoadTestsStart(c.authCtx(ctx), loadTestID).
+		XStackId(c.stackID).
+		K6IdempotencyKey(randomStrHex())
+
+	loadTestRun, res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+	if err := CheckResponse(res, rerr); err != nil {
+		return nil, fmt.Errorf("starting cloud test run: %w", err)
+	}
+
+	return loadTestRun, nil
+}
+
+// CreateAndStartCloudTestRun creates a new cloud test (or updates it if it already exists) and starts a new test run.
+func (c *Client) CreateAndStartCloudTestRun(
+	ctx context.Context, name string, projectID int64, arc *lib.Archive,
+) (*k6cloud.StartLoadTestResponse, error) {
+	loadTest, err := c.CreateOrUpdateCloudTest(ctx, name, projectID, arc)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.StartCloudTestRun(ctx, loadTest.Id)
 }
