@@ -107,22 +107,46 @@ func runCloudTests(t *testing.T, setupCmd setupCommandFunc) {
 		stdout := ts.Stdout.String()
 		t.Log(stdout)
 		assert.Contains(t, stdout, `execution: cloud`)
-		assert.Contains(t, stdout, "output: "+testStackURL+"/runs/456")
+		assert.Contains(t, stdout, "output: "+testStackURL+"/a/k6-app/tests/456")
 		assert.Contains(t, stdout, `test status: Uploaded`)
+	})
+
+	t.Run("TestCloudUploadOnlyNoStackURL", func(t *testing.T) {
+		t.Parallel()
+
+		ts := getSimpleCloudTestState(t, nil, setupCmd, []string{"--upload-only", "--log-output=stdout"}, nil, nil)
+		delete(ts.Env, "K6_CLOUD_STACK_URL")
+		cmd.ExecuteWithGlobalState(ts.GlobalState)
+
+		stdout := ts.Stdout.String()
+		t.Log(stdout)
+		assert.Contains(t, stdout, `test status: Uploaded`)
+		assert.Contains(t, stdout, "output: -")
+		// Without StackURL, no URL should be shown — neither a broken
+		// relative path nor a run URL (upload-only has no test run).
+		assert.NotContains(t, stdout, `output: /a/k6-app/tests/`)
+		assert.NotContains(t, stdout, `/runs/`)
 	})
 
 	t.Run("TestCloudWithConfigOverride", func(t *testing.T) {
 		t.Parallel()
 
-		// In v6, the ConfigOverride is no longer used. The URL comes from
-		// URLForResults until we switch to TestRunDetailsPageUrl in a later commit.
-		ts := getSimpleCloudTestState(t, nil, setupCmd, nil, nil, nil)
+		// In v6, the webAppURL comes from test_run_details_page_url in the
+		// start response's AdditionalProperties, not from a ConfigOverride.
+		testRunURL := "https://custom.cloud.url/runs/123"
+
+		startHandler := http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+			writeJSON(resp, http.StatusOK,
+				fmt.Sprintf(testRunJSONTmpl, 123, v6cloudapi.StatusRunning, `null`, testRunURL))
+		})
+
+		ts := getSimpleCloudTestState(t, nil, setupCmd, nil, startHandler, nil)
 		cmd.ExecuteWithGlobalState(ts.GlobalState)
 
 		stdout := ts.Stdout.String()
 		t.Log(stdout)
 		assert.Contains(t, stdout, "execution: cloud")
-		assert.Contains(t, stdout, "output: "+testStackURL+"/runs/123")
+		assert.Contains(t, stdout, "output: "+testRunURL)
 	})
 
 	// TestCloudWithArchive tests that if k6 uses a static archive with the script inside that has cloud options like:

@@ -206,19 +206,35 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 
 	modifyAndPrintBar(c.gs, progressBar, pb.WithConstProgress(0, "Uploading archive"))
 
-	var testRunID int64
+	var (
+		testRunID int64
+		testURL   string
+	)
+
+	// Upload-only has no start response, so no TestRunDetailsPageUrl.
+	// Build the WebAppURL from the stack URL for URLForTest when available.
+	if c.uploadOnly && cloudConfig.StackURL.Valid && cloudConfig.StackURL.String != "" {
+		cloudConfig.WebAppURL = null.StringFrom(cloudConfig.StackURL.String + "/a/k6-app")
+	}
+
 	if c.uploadOnly {
 		loadTest, createErr := client.CreateOrUpdateCloudTest(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
 		if createErr != nil {
 			return fmt.Errorf("uploading cloud test: %w", createErr)
 		}
+
 		testRunID = int64(loadTest.Id)
+		if cloudConfig.WebAppURL.Valid {
+			testURL = cloudapi.URLForTest(strconv.FormatInt(testRunID, 10), cloudConfig)
+		}
 	} else {
 		cloudTestRun, startErr := client.CreateAndStartCloudTestRun(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
 		if startErr != nil {
 			return fmt.Errorf("starting cloud test run: %w", startErr)
 		}
+
 		testRunID = int64(cloudTestRun.Id)
+		testURL = cloudTestRun.TestRunDetailsPageUrl
 	}
 
 	refID := strconv.FormatInt(testRunID, 10)
@@ -248,7 +264,9 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	testURL := cloudapi.URLForResults(refID, cloudConfig)
+	if testURL == "" && !c.uploadOnly {
+		testURL = cloudapi.URLForResults(refID, cloudConfig)
+	}
 	executionPlan := test.derivedConfig.Scenarios.GetFullExecutionRequirements(et)
 	printExecutionDescription(
 		c.gs, "cloud", test.sourceRootPath, testURL, test.derivedConfig, et, executionPlan, nil,

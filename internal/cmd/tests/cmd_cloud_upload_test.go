@@ -41,7 +41,7 @@ func TestK6CloudUpload(t *testing.T) {
 		stdout := ts.Stdout.String()
 		t.Log(stdout)
 		assert.Contains(t, stdout, `execution: cloud`)
-		assert.Contains(t, stdout, `output: https://app.k6.io/runs/456`)
+		assert.Contains(t, stdout, "output: "+testStackURL+"/a/k6-app/tests/456")
 		assert.Contains(t, stdout, `test status: Uploaded`)
 	})
 
@@ -130,7 +130,7 @@ func TestK6CloudUpload(t *testing.T) {
 		t.Log(stdout)
 		assert.NotContains(t, stdout, `not logged in`)
 		assert.Contains(t, stdout, `execution: cloud`)
-		assert.Contains(t, stdout, `output: https://app.k6.io/runs/456`)
+		assert.Contains(t, stdout, "output: "+testStackURL+"/a/k6-app/tests/456")
 		assert.Contains(t, stdout, `test status: Uploaded`)
 	})
 }
