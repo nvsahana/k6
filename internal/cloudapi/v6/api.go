@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 
 	k6cloud "github.com/grafana/k6-cloud-openapi-client-go/k6"
@@ -35,14 +34,7 @@ func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options l
 		ValidateOptionsRequest(validateOptions).
 		XStackId(int32(c.stackID))
 	_, httpRes, rerr := req.Execute()
-	defer func() {
-		if httpRes != nil {
-			_, _ = io.Copy(io.Discard, httpRes.Body)
-			if cerr := httpRes.Body.Close(); cerr != nil && err == nil {
-				err = cerr
-			}
-		}
-	}()
+	defer closeResponse(httpRes, &err)
 
 	if rerr != nil {
 		var apiErr *k6cloud.GenericOpenAPIError
@@ -71,14 +63,7 @@ func (c *Client) ValidateToken(ctx context.Context, stackURL string) (_ *k6cloud
 		XStackUrl(stackURL)
 
 	resp, httpRes, rerr := req.Execute()
-	defer func() {
-		if httpRes != nil {
-			_, _ = io.Copy(io.Discard, httpRes.Body)
-			if cerr := httpRes.Body.Close(); cerr != nil && err == nil {
-				err = cerr
-			}
-		}
-	}()
+	defer closeResponse(httpRes, &err)
 
 	if rerr != nil {
 		var apiErr *k6cloud.GenericOpenAPIError

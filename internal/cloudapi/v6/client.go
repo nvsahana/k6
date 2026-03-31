@@ -77,6 +77,18 @@ func (c *Client) authCtx(ctx context.Context) context.Context {
 	return context.WithValue(ctx, k6cloud.ContextAccessToken, c.token)
 }
 
+// closeResponse is a helper that ensures the response body is properly closed.
+// It should be called with defer immediately after receiving a response.
+func closeResponse(r *http.Response, errPtr *error) {
+	if r == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, r.Body)
+	if cerr := r.Body.Close(); cerr != nil && *errPtr == nil {
+		*errPtr = cerr
+	}
+}
+
 // CheckResponse checks the parsed response.
 // It returns nil if the code is in the successful range,
 // otherwise it tries to parse the body and return a parsed error.
