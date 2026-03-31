@@ -11,7 +11,7 @@ import (
 )
 
 // ValidateToken calls the endpoint to validate the Client's token and returns the result.
-func (c *Client) ValidateToken(stackURL string) (_ *k6cloud.AuthenticationResponse, err error) {
+func (c *Client) ValidateToken(ctx context.Context, stackURL string) (_ *k6cloud.AuthenticationResponse, err error) {
 	if stackURL == "" {
 		return nil, errors.New("stack URL is required to validate token")
 	}
@@ -20,9 +20,9 @@ func (c *Client) ValidateToken(stackURL string) (_ *k6cloud.AuthenticationRespon
 		return nil, fmt.Errorf("invalid stack URL: %w", err)
 	}
 
-	ctx := context.WithValue(context.Background(), k6cloud.ContextAccessToken, c.token)
+	authCtx := context.WithValue(ctx, k6cloud.ContextAccessToken, c.token)
 	req := c.apiClient.AuthorizationAPI.
-		Auth(ctx).
+		Auth(authCtx).
 		XStackUrl(stackURL)
 
 	resp, httpRes, rerr := req.Execute()
@@ -38,12 +38,12 @@ func (c *Client) ValidateToken(stackURL string) (_ *k6cloud.AuthenticationRespon
 	if rerr != nil {
 		var apiErr *k6cloud.GenericOpenAPIError
 		if !errors.As(rerr, &apiErr) {
-			return nil, fmt.Errorf("failed to validate token: %w", rerr)
+			return nil, fmt.Errorf("validating token: %w", rerr)
 		}
 	}
 
 	if err := CheckResponse(httpRes); err != nil {
-		return nil, fmt.Errorf("failed to validate token: %w", err)
+		return nil, fmt.Errorf("validating token: %w", err)
 	}
 
 	return resp, err

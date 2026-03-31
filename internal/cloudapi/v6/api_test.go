@@ -38,7 +38,7 @@ func TestValidateToken(t *testing.T) {
 		client, err := NewClient(testutils.NewLogger(t), "test-token", server.URL, "1.0", 1*time.Second)
 		require.NoError(t, err)
 
-		resp, err := client.ValidateToken("https://stack.grafana.net")
+		resp, err := client.ValidateToken(t.Context(), "https://stack.grafana.net")
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		assert.Equal(t, int32(123), resp.StackId)
@@ -62,7 +62,7 @@ func TestValidateToken(t *testing.T) {
 		client, err := NewClient(testutils.NewLogger(t), "invalid-token", server.URL, "1.0", 1*time.Second)
 		require.NoError(t, err)
 
-		resp, err := client.ValidateToken("https://stack.grafana.net")
+		resp, err := client.ValidateToken(t.Context(), "https://stack.grafana.net")
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "(401/error) Invalid token")
@@ -74,7 +74,7 @@ func TestValidateToken(t *testing.T) {
 		client, err := NewClient(testutils.NewLogger(t), "test-token", "http://invalid-url-that-does-not-exist", "1.0", 1*time.Second)
 		require.NoError(t, err)
 
-		resp, err := client.ValidateToken("https://stack.grafana.net")
+		resp, err := client.ValidateToken(t.Context(), "https://stack.grafana.net")
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 	})
@@ -84,7 +84,7 @@ func TestValidateToken(t *testing.T) {
 		client, err := NewClient(testutils.NewLogger(t), "test-token", "http://example.com", "1.0", 1*time.Second)
 		require.NoError(t, err)
 
-		resp, err := client.ValidateToken("")
+		resp, err := client.ValidateToken(t.Context(), "")
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Equal(t, "stack URL is required to validate token", err.Error())
@@ -95,7 +95,7 @@ func TestValidateToken(t *testing.T) {
 		client, err := NewClient(testutils.NewLogger(t), "test-token", "http://example.com", "1.0", 1*time.Second)
 		require.NoError(t, err)
 
-		resp, err := client.ValidateToken("://invalid-url")
+		resp, err := client.ValidateToken(t.Context(), "://invalid-url")
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "invalid stack URL")
