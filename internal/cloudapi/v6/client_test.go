@@ -10,6 +10,7 @@ import (
 
 	k6cloud "github.com/grafana/k6-cloud-openapi-client-go/k6"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCheckResponse(t *testing.T) {
@@ -107,6 +108,68 @@ func TestCheckResponse(t *testing.T) {
 				assert.Equal(t, tt.response, respErr.Response)
 			} else {
 				assert.Equal(t, tt.expectedError, err.Error())
+			}
+		})
+	}
+}
+
+func TestToInt32(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		input       int64
+		expected    int32
+		expectError bool
+	}{
+		{
+			name:        "valid positive value",
+			input:       123,
+			expected:    123,
+			expectError: false,
+		},
+		{
+			name:        "valid negative value",
+			input:       -456,
+			expected:    -456,
+			expectError: false,
+		},
+		{
+			name:        "max int32 value",
+			input:       2147483647,
+			expected:    2147483647,
+			expectError: false,
+		},
+		{
+			name:        "min int32 value",
+			input:       -2147483648,
+			expected:    -2147483648,
+			expectError: false,
+		},
+		{
+			name:        "overflow positive",
+			input:       2147483648,
+			expectError: true,
+		},
+		{
+			name:        "overflow negative",
+			input:       -2147483649,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := toInt32(tt.input)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "overflows int32")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -24,7 +25,7 @@ const (
 type Client struct {
 	apiClient *k6cloud.APIClient
 	token     string
-	stackID   int64
+	stackID   int32
 	baseURL   string
 
 	logger logrus.FieldLogger
@@ -64,8 +65,13 @@ func NewClient(logger logrus.FieldLogger, token, host, version string, timeout t
 }
 
 // SetStackID sets the stack ID for the client.
-func (c *Client) SetStackID(stackID int64) {
-	c.stackID = stackID
+func (c *Client) SetStackID(stackID int64) error {
+	stackID32, err := toInt32(stackID)
+	if err != nil {
+		return fmt.Errorf("invalid stack ID: %w", err)
+	}
+	c.stackID = stackID32
+	return nil
 }
 
 // BaseURL returns configured host.
@@ -131,4 +137,12 @@ func CheckResponse(r *http.Response, err error) error {
 	}
 	payload.Response = r
 	return payload
+}
+
+// toInt32 safely converts an int64 to int32, returning an error if overflow would occur.
+func toInt32(val int64) (int32, error) {
+	if val < math.MinInt32 || val > math.MaxInt32 {
+		return 0, fmt.Errorf("value %d overflows int32", val)
+	}
+	return int32(val), nil
 }

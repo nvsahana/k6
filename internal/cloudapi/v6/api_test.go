@@ -1,6 +1,7 @@
 package cloudapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,10 +9,17 @@ import (
 	"testing"
 	"time"
 
+	k6cloud "github.com/grafana/k6-cloud-openapi-client-go/k6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.k6.io/k6/internal/lib/testutils"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/types"
+	"gopkg.in/guregu/null.v3"
 )
+
+// testProjectID is used across tests as the project ID in mock API requests.
+const testProjectID = 789
 
 func TestValidateToken(t *testing.T) {
 	t.Parallel()
@@ -99,6 +107,68 @@ func TestValidateToken(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "invalid stack URL")
+	})
+}
+
+func TestValidateOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful options validation", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			assert.Equal(t, "123", r.Header.Get("X-Stack-Id"))
+
+			b, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+
+			var validateOptions k6cloud.ValidateOptionsRequest
+			err = json.Unmarshal(b, &validateOptions)
+			require.NoError(t, err)
+
+			duration := validateOptions.Options.AdditionalProperties["duration"]
+			assert.Equal(t, "1m0s", duration)
+
+			w.Header().Set("Content-Type", "application/json")
+			fprint(t, w, `{}`)
+		}))
+		defer server.Close()
+
+		client, err := NewClient(testutils.NewLogger(t), "test-token", server.URL, "1.0", 1*time.Second)
+		require.NoError(t, err)
+		require.NoError(t, client.SetStackID(123))
+
+		opts := lib.Options{
+			Duration: types.NullDurationFrom(60 * time.Second),
+		}
+		err = client.ValidateOptions(t.Context(), testProjectID, opts)
+		require.NoError(t, err)
+	})
+
+	t.Run("validation error", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fprint(t, w, `{
+				"error": {
+					"code": "error",
+					"message": "Invalid VUs number"
+				}
+			}`)
+		}))
+		defer server.Close()
+
+		client, err := NewClient(testutils.NewLogger(t), "test-token", server.URL, "1.0", 1*time.Second)
+		require.NoError(t, err)
+		require.NoError(t, client.SetStackID(123))
+
+		opts := lib.Options{
+			VUs: null.IntFrom(-1),
+		}
+		err = client.ValidateOptions(t.Context(), testProjectID, opts)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "Invalid VUs number")
 	})
 }
 

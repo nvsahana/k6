@@ -22,8 +22,13 @@ func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options l
 		return fmt.Errorf("unmarshaling options: %w", rerr)
 	}
 
+	projectID32, rerr := toInt32(projectID)
+	if rerr != nil {
+		return fmt.Errorf("converting project ID: %w", rerr)
+	}
+
 	validateOptions := &k6cloud.ValidateOptionsRequest{
-		ProjectId: *k6cloud.NewNullableInt32(ptrInt32(int32(projectID))),
+		ProjectId: *k6cloud.NewNullableInt32(&projectID32),
 		Options: k6cloud.Options{
 			AdditionalProperties: generic,
 		},
@@ -32,14 +37,12 @@ func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options l
 	req := c.apiClient.LoadTestsAPI.
 		ValidateOptions(c.authCtx(ctx)).
 		ValidateOptionsRequest(validateOptions).
-		XStackId(int32(c.stackID))
+		XStackId(c.stackID)
 	_, httpRes, rerr := req.Execute()
 	defer closeResponse(httpRes, &err)
 
 	return CheckResponse(httpRes, rerr)
 }
-
-func ptrInt32(v int32) *int32 { return &v }
 
 // ValidateToken calls the endpoint to validate the Client's token and returns the result.
 func (c *Client) ValidateToken(ctx context.Context, stackURL string) (_ *k6cloud.AuthenticationResponse, err error) {
