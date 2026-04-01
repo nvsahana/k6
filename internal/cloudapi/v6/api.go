@@ -312,3 +312,19 @@ func (c *Client) CreateAndStartCloudTestRun(
 
 	return c.StartCloudTestRun(ctx, loadTest.Id)
 }
+
+// StopCloudTestRun tells the cloud to stop the test with the provided testRunID.
+func (c *Client) StopCloudTestRun(ctx context.Context, testRunID int64) (err error) {
+	testRunID32, err := toInt32(testRunID)
+	if err != nil {
+		return fmt.Errorf("converting test run ID: %w", err)
+	}
+
+	req := c.apiClient.TestRunsAPI.TestRunsAbort(c.authCtx(ctx), testRunID32).XStackId(c.stackID)
+	res, rerr := req.Execute()
+	defer closeResponse(res, &err)
+	if err := CheckResponse(res, rerr); err != nil {
+		return fmt.Errorf("stopping cloud test run: %w", err)
+	}
+	return nil
+}

@@ -417,6 +417,29 @@ func fprint(t *testing.T, w io.Writer, s string) int {
 	return n
 }
 
+func TestStopCloudTestRun(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful test run stop", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.URL.Path, "999")
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			assert.Equal(t, "123", r.Header.Get("X-Stack-Id"))
+
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+
+		client, err := NewClient(testutils.NewLogger(t), "test-token", server.URL, "1.0", 1*time.Second)
+		require.NoError(t, err)
+		require.NoError(t, client.SetStackID(123))
+
+		err = client.StopCloudTestRun(t.Context(), 999)
+		require.NoError(t, err)
+	})
+}
+
 func TestFetchTestRun(t *testing.T) {
 	t.Parallel()
 
