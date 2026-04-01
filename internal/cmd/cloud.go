@@ -185,19 +185,13 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 	// Start cloud test run
 	modifyAndPrintBar(c.gs, progressBar, pb.WithConstProgress(0, "Validating script options"))
 
-	v6client, err := v6cloudapi.NewClient(
+	client, err := v6cloudapi.NewClient(
 		logger, cloudConfig.Token.String, cloudConfig.Hostv6.String, build.Version, cloudConfig.Timeout.TimeDuration())
 	if err != nil {
 		return err
 	}
-	if err := v6client.SetStackID(cloudConfig.StackID.Int64); err != nil {
-		return err
-	}
-
-	client := cloudapi.NewClient(
-		logger, cloudConfig.Token.String, cloudConfig.Host.String, build.Version, cloudConfig.Timeout.TimeDuration())
-	if cloudConfig.StackID.Valid {
-		client.SetStackID(cloudConfig.StackID.Int64)
+	if err := client.SetStackID(cloudConfig.StackID.Int64); err != nil {
+		return fmt.Errorf("setting stack ID: %w", err)
 	}
 
 	if cloudConfig.ProjectID.Int64 == 0 {
@@ -206,21 +200,21 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err = v6client.ValidateOptions(globalCtx, cloudConfig.ProjectID.Int64, arc.Options); err != nil {
-		return err
+	if err = client.ValidateOptions(globalCtx, cloudConfig.ProjectID.Int64, arc.Options); err != nil {
+		return fmt.Errorf("validating options: %w", err)
 	}
 
 	modifyAndPrintBar(c.gs, progressBar, pb.WithConstProgress(0, "Uploading archive"))
 
 	var testRunID int64
 	if c.uploadOnly {
-		loadTest, createErr := v6client.CreateOrUpdateCloudTest(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
+		loadTest, createErr := client.CreateOrUpdateCloudTest(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
 		if createErr != nil {
 			return fmt.Errorf("uploading cloud test: %w", createErr)
 		}
 		testRunID = int64(loadTest.Id)
 	} else {
-		cloudTestRun, startErr := v6client.CreateAndStartCloudTestRun(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
+		cloudTestRun, startErr := client.CreateAndStartCloudTestRun(globalCtx, name, cloudConfig.ProjectID.Int64, arc)
 		if startErr != nil {
 			return fmt.Errorf("starting cloud test run: %w", startErr)
 		}
@@ -235,7 +229,7 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 		// Do this in a separate goroutine so that if it blocks, the
 		// second signal can still abort the process execution.
 		go func() {
-			stopErr := client.StopCloudTestRun(refID)
+			stopErr := client.StopCloudTestRun(context.WithoutCancel(globalCtx), testRunID)
 			if stopErr != nil {
 				logger.WithError(stopErr).Error("Stop cloud test error")
 			} else {
@@ -348,7 +342,7 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 	pollCtx := context.WithoutCancel(globalCtx)
 
 	for range ticker.C {
-		newTestProgress, progressErr := v6client.FetchTestRun(pollCtx, testRunID)
+		newTestProgress, progressErr := client.FetchTestRun(pollCtx, testRunID)
 		if progressErr != nil {
 			logger.WithError(progressErr).Error("Test progress error")
 			continue
