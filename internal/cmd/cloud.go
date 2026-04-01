@@ -19,6 +19,7 @@ import (
 	"go.k6.io/k6/errext"
 	"go.k6.io/k6/errext/exitcodes"
 	"go.k6.io/k6/internal/build"
+	v6cloudapi "go.k6.io/k6/internal/cloudapi/v6"
 	"go.k6.io/k6/internal/ui/pb"
 	"go.k6.io/k6/lib"
 
@@ -183,19 +184,30 @@ func (c *cmdCloud) run(cmd *cobra.Command, args []string) error {
 
 	// Start cloud test run
 	modifyAndPrintBar(c.gs, progressBar, pb.WithConstProgress(0, "Validating script options"))
+
+	v6client, err := v6cloudapi.NewClient(
+		logger, cloudConfig.Token.String, cloudConfig.Hostv6.String, build.Version, cloudConfig.Timeout.TimeDuration())
+	if err != nil {
+		return err
+	}
+	if err := v6client.SetStackID(cloudConfig.StackID.Int64); err != nil {
+		return err
+	}
+
 	client := cloudapi.NewClient(
 		logger, cloudConfig.Token.String, cloudConfig.Host.String, build.Version, cloudConfig.Timeout.TimeDuration())
 	if cloudConfig.StackID.Valid {
 		client.SetStackID(cloudConfig.StackID.Int64)
-	}
-	if err = client.ValidateOptions(arc.Options); err != nil {
-		return err
 	}
 
 	if cloudConfig.ProjectID.Int64 == 0 {
 		if err := resolveAndSetProjectID(c.gs, &cloudConfig, tmpCloudConfig, arc); err != nil {
 			return err
 		}
+	}
+
+	if err = v6client.ValidateOptions(globalCtx, cloudConfig.ProjectID.Int64, arc.Options); err != nil {
+		return err
 	}
 
 	modifyAndPrintBar(c.gs, progressBar, pb.WithConstProgress(0, "Uploading archive"))
