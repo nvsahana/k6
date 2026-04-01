@@ -8,7 +8,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 
 	"go.k6.io/k6/errext/exitcodes"
 	v6cloudapi "go.k6.io/k6/internal/cloudapi/v6"
@@ -276,6 +279,77 @@ func runCloudTests(t *testing.T, setupCmd setupCommandFunc) {
 		stdout := ts.Stdout.String()
 		t.Log(stdout)
 		assert.Contains(t, stdout, `The test has failed`)
+	})
+
+	t.Run("TestCloudGracefulStopWaitsForTerminal", func(t *testing.T) {
+		t.Parallel()
+
+		var aborted atomic.Bool
+		progressCallback := func() v6cloudapi.TestRunProgress {
+			if aborted.Load() {
+				return v6cloudapi.TestRunProgress{
+					Status:            v6cloudapi.StatusAborted,
+					EstimatedDuration: 60,
+					ExecutionDuration: 30,
+				}
+			}
+			return v6cloudapi.TestRunProgress{
+				Status:            v6cloudapi.StatusRunning,
+				EstimatedDuration: 60,
+				ExecutionDuration: 5,
+			}
+		}
+
+		testRunID := 123
+		defaultWebAppURL := fmt.Sprintf("%s/runs/%d", testStackURL, testRunID)
+		defaultProgress := v6cloudapi.TestRunProgress{
+			Status:            v6cloudapi.StatusRunning,
+			EstimatedDuration: 60,
+			ExecutionDuration: 5,
+		}
+
+		abortHandler := http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+			aborted.Store(true)
+			resp.WriteHeader(http.StatusNoContent)
+		})
+
+		srv := getTestServer(t, map[string]http.Handler{
+			"POST ^/cloud/v6/validate_options$":                           http.HandlerFunc(v6ValidateOptionsHandler),
+			`POST ^/cloud/v6/projects/\d+/load_tests$`:                    cloudTestCreateSimple(t),
+			`PUT ^/cloud/v6/load_tests/\d+/script$`:                       http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) { resp.WriteHeader(http.StatusNoContent) }),
+			`POST ^/cloud/v6/load_tests/\d+/start$`:                       cloudTestStartSimple(t, testRunID, defaultWebAppURL),
+			fmt.Sprintf("GET ^/cloud/v6/test_runs/%d$", testRunID):        v6ProgressHandler(testRunID, defaultWebAppURL, defaultProgress, progressCallback),
+			fmt.Sprintf("POST ^/cloud/v6/test_runs/%d/abort$", testRunID): abortHandler,
+			`GET ^/cloud/v6/projects/\d+/load_tests`: http.HandlerFunc(func(resp http.ResponseWriter, _ *http.Request) {
+				writeJSON(resp, http.StatusOK, fmt.Sprintf(`{"value": [%s]}`, loadTestJSON))
+			}),
+		})
+		t.Cleanup(srv.Close)
+
+		ts := NewGlobalTestState(t)
+		require.NoError(t, fsext.WriteFile(ts.FS, filepath.Join(ts.Cwd, "test.js"), []byte(`export default function() {}`), 0o644))
+		ts.CmdArgs = setupCmd([]string{"--verbose", "--log-output=stdout"})
+		ts.Env["K6_SHOW_CLOUD_LOGS"] = "false"
+		ts.Env["K6_CLOUD_HOST"] = srv.URL
+		ts.Env["K6_CLOUD_HOST_V6"] = srv.URL
+		ts.Env["K6_CLOUD_TOKEN"] = "foo"
+		ts.Env["K6_CLOUD_STACK_ID"] = "123"
+		ts.Env["K6_CLOUD_PROJECT_ID"] = "456"
+		ts.Env["K6_CLOUD_STACK_URL"] = testStackURL
+
+		sendSignal := injectMockSignalNotifier(ts)
+		asyncWaitForStdoutAndRun(t, ts, 20, 500*time.Millisecond, "Trapping interrupt signals", func() {
+			t.Log("signal trap is set, sending SIGINT...")
+			sendSignal <- syscall.SIGINT
+			<-sendSignal
+		})
+
+		cmd.ExecuteWithGlobalState(ts.GlobalState)
+
+		stdout := ts.Stdout.String()
+		t.Log(stdout)
+		assert.Contains(t, stdout, `test status: Aborted`)
+		assert.True(t, aborted.Load(), "abort endpoint should have been called")
 	})
 }
 
