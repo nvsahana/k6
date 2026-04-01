@@ -36,14 +36,7 @@ func (c *Client) ValidateOptions(ctx context.Context, projectID int64, options l
 	_, httpRes, rerr := req.Execute()
 	defer closeResponse(httpRes, &err)
 
-	if rerr != nil {
-		var apiErr *k6cloud.GenericOpenAPIError
-		if !errors.As(rerr, &apiErr) {
-			return rerr
-		}
-	}
-
-	return CheckResponse(httpRes)
+	return CheckResponse(httpRes, rerr)
 }
 
 func ptrInt32(v int32) *int32 { return &v }
@@ -64,17 +57,9 @@ func (c *Client) ValidateToken(ctx context.Context, stackURL string) (_ *k6cloud
 
 	resp, httpRes, rerr := req.Execute()
 	defer closeResponse(httpRes, &err)
-
-	if rerr != nil {
-		var apiErr *k6cloud.GenericOpenAPIError
-		if !errors.As(rerr, &apiErr) {
-			return nil, fmt.Errorf("validating token: %w", rerr)
-		}
-	}
-
-	if err := CheckResponse(httpRes); err != nil {
+	if err := CheckResponse(httpRes, rerr); err != nil {
 		return nil, fmt.Errorf("validating token: %w", err)
 	}
 
-	return resp, err
+	return resp, nil
 }

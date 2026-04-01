@@ -3,6 +3,7 @@ package cloudapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,7 +93,14 @@ func closeResponse(r *http.Response, errPtr *error) {
 // CheckResponse checks the parsed response.
 // It returns nil if the code is in the successful range,
 // otherwise it tries to parse the body and return a parsed error.
-func CheckResponse(r *http.Response) error {
+func CheckResponse(r *http.Response, err error) error {
+	if err != nil {
+		var cloudErr *k6cloud.GenericOpenAPIError
+		if !errors.As(err, &cloudErr) {
+			return err
+		}
+	}
+
 	if r == nil {
 		return errUnknown
 	}
